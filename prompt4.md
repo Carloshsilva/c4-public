@@ -279,3 +279,148 @@ As regras de ouro que garantem a resiliência são:
 6. **Log de anomalias:** todas as transições, ausências de cabeçalhos e bloqueios são registrados, permitindo auditoria e ajuste fino das margens de segurança.
 
 Com essas premissas, o selic-conecta-outbound consegue operar de forma resiliente, evitando bloqueios da API SELIC CONECTA e mantendo a disponibilidade mesmo sob falhas de comunicação ou variações abruptas de limite.
+
+# Especificação de Problema – Rate Limiting Distribuído
+
+## 1. Contexto
+Um proxy recebe requisições de sistemas internos e as encaminha a um provedor externo.  
+O proxy opera em duas instâncias, em servidores separados, para alta disponibilidade.  
+Os sistemas internos enxergam o proxy como um ponto único.  
+O provedor externo enxerga as duas instâncias como uma única identidade de origem (IP compartilhado).  
+
+O provedor impõe um limite de requisições por minuto a essa identidade.  
+Quando o limite é ultrapassado, o provedor bloqueia toda a identidade por um tempo determinado.  
+
+As duas instâncias possuem um mecanismo embutido de coordenação que permite compartilhar informações de consumo quando a comunicação entre elas está ativa.  
+Enquanto esse mecanismo funciona, as instâncias tomam decisões considerando o consumo conjunto.  
+
+O problema surge quando a comunicação entre as instâncias falha (por queda de uma delas, partição de rede ou qualquer causa que as impeça de trocar informações).  
+Nessas situações, cada instância precisa continuar encaminhando requisições sem ter visibilidade do consumo da outra, mas a soma dos encaminhamentos ainda precisa respeitar o limite global.  
+
+A demanda total que chega às instâncias pode, rotineiramente, superar o limite disponível.  
+O desafio é conter o consumo conjunto das duas instâncias em todos os cenários (com ou sem comunicação entre elas), usando apenas os recursos embarcados, sem introduzir componentes de infraestrutura externos.
+
+## 2. Atores Externos e suas Características
+- **Sistemas Internos de Origem**  
+  Enviam requisições de negócio ao proxy.  
+  Cada requisição é entregue a uma única instância, nunca duplicada.  
+  Não têm conhecimento da existência de duas instâncias.
+
+- **Provedor Externo**  
+  Contabiliza as requisições recebidas da identidade de origem compartilhada.  
+  Impõe um limite de requisições por janela de tempo.  
+  Altera esse limite quando desejar (aumentos ou reduções).  
+  Informa o estado da cota nos cabeçalhos de cada resposta.  
+  Em caso de violação, bloqueia temporariamente toda a identidade.
+
+## 3. Interface e Comportamento do Provedor Externo
+- O provedor utiliza janelas fixas de 60 segundos, alinhadas ao seu próprio relógio.  
+- Toda resposta de sucesso (HTTP 2xx) inclui os cabeçalhos:  
+  - `RateLimit-Limit`: número máximo de requisições por janela (ex.: 300).  
+  - `RateLimit-Remaining`: quantas requisições ainda restam na janela atual.  
+  - `RateLimit-Reset`: segundos restantes até o fim da janela e renovação do limite.  
+- Quando o limite é excedido, o provedor responde com HTTP 429.
+    - A resposta 429 inclui os mesmos cabeçalhos de rate limit (RateLimit-Limit, RateLimit-Remaining: 0, RateLimit-Reset), podendo conter também o cabeçalho Retry-After.
+    - O corpo da resposta contém uma mensagem de erro.
+- Durante o bloqueio, qualquer requisição da mesma identidade é rejeitada com 429.  
+- O valor de `RateLimit-Limit` pode mudar entre uma resposta e outra (aumentar ou diminuir).  
+- O bloqueio dura pelo restante da janela corrente. Após o reset, a identidade volta a ser aceita.
+
+## 4. Informações que Chegam ao Sistema (Inputs)
+- Requisições de negócio oriundas de sistemas internos, uma a uma.  
+- A cada resposta do provedor:  
+  - Limite total (`RateLimit-Limit`, numérico).  
+  - Requisições restantes na janela atual (`RateLimit-Remaining`, numérico).  
+  - Segundos para o reset da janela (`RateLimit-Reset`, numérico).  
+- Quando ocorre bloqueio:  
+  - Resposta HTTP 429 com `Retry-After` e `RateLimit-Remaining: 0`.  
+- Antes da primeira resposta do provedor, o valor de referência documentado é 300 requisições por minuto.  
+- Estado da comunicação com a outra instância: ativa ou inativa.
+- Respostas do provedor que não contenham os cabeçalhos RateLimit-Limit, RateLimit-Remaining e RateLimit-Reset (por exemplo, erro HTTP 500 ou resposta 2xx sem os cabeçalhos). Nesse caso, o sistema não recebe atualização de estado da cota naquela resposta.
+
+### 4.1. Dicionário de Informações do Provedor Externo
+
+**Cabeçalhos presentes em respostas de sucesso (HTTP 2xx) e na resposta 429:**
+
+| Cabeçalho | Tipo | Significado | Observações |
+|:---|:---|:---|:---|
+| `RateLimit-Limit` | Número inteiro | Limite máximo de requisições permitidas por janela para a identidade de origem. | Pode mudar entre respostas. Na documentação de referência, o valor inicial é 300. |
+| `RateLimit-Remaining` | Número inteiro | Quantidade de requisições ainda disponíveis na janela corrente, segundo o provedor. | Decrementa a cada requisição processada pelo provedor. Chega a 0 quando o limite é atingido. |
+| `RateLimit-Reset` | Número inteiro (segundos) | Tempo restante, em segundos, até o fim da janela corrente e renovação do limite. | Fornecido tanto em respostas de sucesso quanto em 429. |
+| `Retry-After` (somente 429) | Data/hora ou segundos | Indica quando a identidade poderá voltar a fazer requisições. | Pode ser um timestamp ou duração em segundos. |
+
+**Valor documental de referência:**
+- Antes que qualquer resposta real do provedor seja recebida (partida a frio), o único valor disponível é o documentado: **300 requisições por minuto**, com janela de 60 segundos. Esse valor é uma premissa inicial, não uma verdade autoritativa.
+
+**Ausência de cabeçalhos:**
+- Respostas do provedor que **não contenham** um ou mais dos cabeçalhos `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` (por exemplo, erro HTTP 500 ou resposta 2xx incompleta) **não fornecem atualização** sobre o estado da cota. O sistema deve tratar essa resposta como "sem informação de cota".
+
+## 5. Premissas e Restrições Imutáveis
+- As duas instâncias executam simultaneamente, em alta disponibilidade.  
+- Cada requisição de negócio chega a exatamente uma instância; não há duplicação.  
+- As instâncias não compartilham relógio. Seus relógios locais são independentes e podem divergir.  
+- As instâncias possuem um mecanismo embutido de coordenação que, quando a comunicação está ativa, permite compartilhar estado de consumo e tomar decisões conjuntas.  
+- Esse mecanismo de comunicação é direto entre as instâncias, sem depender de servidores externos.  
+- A comunicação entre as instâncias pode falhar a qualquer momento. Cada instância é capaz de detectar se essa comunicação está ativa ou inativa.  
+- Nenhum componente de infraestrutura externo adicional (banco de dados, árbitro, cache centralizado) pode ser introduzido para resolver o problema.  
+- O sistema não tem controle sobre o comportamento do provedor (limite, janela, bloqueios).  
+- Segurança (não sofrer bloqueio) tem prioridade absoluta sobre vazão.  
+- Vazão abaixo da máxima é aceitável quando a comunicação entre instâncias está inativa, desde que não ocorra bloqueio. Nesse cenário, a solução deve buscar a maior vazão possível que ainda garanta que o bloqueio não acontecerá.
+- Na partida a frio, nenhuma informação real do provedor está disponível. Até a primeira resposta com cabeçalhos de rate limit, o sistema adota o valor documental de referência (300) como única informação sobre o limite.
+- No modo coordenado (comunicação ativa), as decisões são tomadas com base no estado de consumo compartilhado entre as instâncias.
+- Quando a comunicação falha, cada instância passa a usar exclusivamente as informações que obteve diretamente do provedor (últimos cabeçalhos recebidos por ela) e sua própria contagem de requisições encaminhadas, sem presumir nada sobre o estado da outra.
+- No modo descoordenado, cada instância não pode presumir que o RateLimit-Remaining reflete apenas o seu próprio consumo. Portanto, o simples uso desse valor como "semáforo verde" para encaminhar é insuficiente para garantir que a soma das duas não ultrapasse o limite global.
+- Para atender à garantia de soma dentro do limite, é admissível que cada instância adote uma cota local segura (por exemplo, uma fração do limite total), derivada exclusivamente de informações que ela possui com certeza (como o RateLimit-Limit e seu próprio contador de requisições), ignorando o RateLimit-Remaining ou utilizando-o apenas como informação complementar não vinculativa.
+- Esse mecanismo de cota local pode ser pensado como um "balde" individual, cujo tamanho é determinado de forma a assegurar que, mesmo que a outra instância também encha seu próprio balde, a soma nunca exceda o limite. A política de dimensionamento e eventual recálculo desse balde é parte da solução.
+- O provedor contabiliza as requisições em janelas fixas de 60 segundos alinhadas ao seu próprio relógio, cujo instante de início é desconhecido pelas instâncias.
+- Como os relógios das instâncias são independentes e podem divergir entre si e em relação ao relógio do provedor, nenhuma instância pode determinar com exatidão os limites temporais da janela corrente do provedor.
+- Em decorrência disso, qualquer estratégia de limitação que dependa de janelas locais ou de divisão estática do limite sem considerar a incerteza temporal não oferece, por si só, garantia de que a soma das requisições em uma janela do provedor permanecerá dentro do limite global. A solução precisa ser robusta a essa incerteza.
+
+## 6. Regras Comportamentais
+- Em qualquer circunstância, a soma total de requisições encaminhadas ao provedor pelas duas instâncias não pode exceder o limite global da janela atual.  
+- Quando a comunicação entre as instâncias está ativa, o encaminhamento de cada uma considera o consumo da outra, de modo que a soma permaneça dentro do limite.  
+- Quando a comunicação entre as instâncias está inativa, cada instância limita seu próprio encaminhamento com base apenas em suas informações locais, de forma que, mesmo que a outra instância também encaminhe até seu máximo possível, o total não ultrapasse o limite global.  
+- Se o provedor reduzir o limite durante a operação, o sistema ajusta seu encaminhamento para não ultrapassar o novo limite, sempre que isso for possível dados os consumos já realizados.  
+- Toda requisição que não puder ser encaminhada imediatamente devido ao limite é recusada de volta ao sistema interno com erro genérico. Nenhuma requisição é retida ou enfileirada.  
+- Se a identidade estiver bloqueada (HTTP 429), nenhuma requisição é encaminhada ao provedor até o fim da janela de bloqueio. Todas as requisições recebidas nesse período são recusadas com erro genérico.  
+- Essa regra de bloqueio se aplica independentemente da causa do 429 (violação por falta de coordenação, redução abrupta de limite ou qualquer outro motivo).  
+- As regras de contenção são válidas tanto com comunicação ativa quanto inativa.
+
+## 7. Cenários de Falha e Comportamento Esperado
+- **Perda de comunicação entre instâncias**  
+  Cada instância detecta a falha.  
+  Passa a limitar seu encaminhamento usando apenas informações locais, de modo que a soma máxima possível das duas ainda respeite o limite global.  
+  Quando a comunicação é restabelecida, o sistema volta a considerar o consumo conjunto e a coordenar os encaminhamentos.
+
+- **Queda de uma instância**  
+  Quando uma instância cai, a remanescente opera sozinha, contendo seu encaminhamento ao limite global.
+  Quando a instância caída retorna e a comunicação entre elas ainda está inativa (ou ainda não foi restabelecida), ela não possui informação sobre o consumo que ocorreu durante sua ausência.
+  Enquanto a comunicação não for restabelecida, a instância que retornou trata a situação como modo descoordenado, limitando seu encaminhamento com base apenas em suas próprias informações (último estado conhecido do provedor antes da queda, se disponível, e seu próprio contador zerado).
+  Se a comunicação for restabelecida, as instâncias sincronizam o estado de consumo e voltam ao modo coordenado. A transição não pode provocar violação do limite global.
+  A retomada e a sincronização (ou a decisão por operar descoordenado) são registradas em log.
+
+- **Bloqueio por HTTP 429 (violação de limite)**  
+  Seja qual for a causa (erro de coordenação, redução repentina de limite não absorvida, condição de corrida não prevista), o sistema detecta a resposta 429.  
+  Cessa imediatamente o envio de novas requisições ao provedor.  
+  Recusa todas as requisições recebidas até o fim da janela de bloqueio indicada pelo `RateLimit-Reset` ou `Retry-After`.  
+  Após o reset, retoma a operação normal (coordenada ou não, conforme estado da comunicação).
+
+- **Redução repentina do limite pelo provedor**  
+  O sistema detecta a redução pelos cabeçalhos da resposta.  
+  Ajusta o encaminhamento para não ultrapassar o novo limite.  
+  Se o consumo corrente já tiver ultrapassado o novo limite antes do ajuste (porque a redução foi maior que a folga existente naquele instante), um bloqueio pode ocorrer e é tratado como descrito acima.
+
+- **Resposta do provedor sem cabeçalhos de rate limit**
+  O provedor retorna uma resposta sem os cabeçalhos RateLimit-Limit, RateLimit-Remaining ou RateLimit-Reset (ex.: erro 500, ou resposta 2xx incompleta).
+  O sistema não atualiza suas informações de limite, capacidade restante ou janela com base nessa resposta.
+  A requisição original é tratada normalmente (encaminhada à origem se erro, processada se sucesso), mas os controles de cota permanecem com os últimos valores válidos conhecidos.
+  Esse evento é registrado em log específico, contendo detalhes da resposta para diagnóstico.
+
+## 8. Objetivos Mensuráveis
+- Quando a comunicação entre instâncias está ativa, o consumo somado nunca excede o limite, independentemente da demanda.  
+- Quando a comunicação está inativa, o consumo somado permanece dentro do limite, ainda que com vazão reduzida.  
+- Nenhum bloqueio (HTTP 429) é causado por violação que poderia ter sido evitada com as informações disponíveis.  
+- Bloqueios inevitáveis (decorrentes de redução abrupta de limite que o sistema não teve tempo de absorver) são tratados sem propagação de erros para os sistemas internos além da recusa imediata da requisição.  
+- O serviço permanece disponível para recusar requisições com erro genérico mesmo durante períodos de bloqueio ou de perda de comunicação.  
+- A transição entre modo coordenado e descoordenado é automática e não causa violação do limite.
+- Todos os eventos anômalos (comunicação interrompida, ausência de cabeçalhos, mudanças de limite, bloqueios) são registrados em log para auditoria, com informações suficientes para diagnóstico posterior.
