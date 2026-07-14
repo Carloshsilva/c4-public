@@ -1,0 +1,45 @@
+// ============================================================================
+// EXEMPLO DE ENCAIXE — NÃO copie como classe. Mostra COMO chamar o RateLimiter
+// dentro do SEU serviço de encaminhamento, DEPOIS das regras de negócio.
+// Adapte os tipos (ClientResponse, extrair headers) ao que seu proxy já usa.
+// ============================================================================
+
+@Service
+public class SeuServicoDeEncaminhamento {
+
+    private final RateLimiter rateLimiter;
+
+    public SeuServicoDeEncaminhamento(RateLimiter rateLimiter) {
+        this.rateLimiter = rateLimiter;
+    }
+
+    public RespostaAoCliente encaminhar(RequisicaoDeNegocio req) {
+
+        // 1) SUAS regras de negócio primeiro. Se reprovar, nem toca no RateLimiter.
+        if (!regrasDeNegocioOk(req)) {
+            return RespostaAoCliente.erroDeNegocio();
+        }
+
+        // 2) MOMENTO 1 — reservar a vaga (rápido, sob lock por dentro)
+        Reserva reserva = rateLimiter.reservar();
+        if (!reserva.permitido()) {
+            return RespostaAoCliente.status(429); // 429 BARATO ao cliente (ele retenta)
+        }
+
+        // 3) Chamar o provedor (HTTP, FORA de qualquer lock) e SEMPRE aplicar a resposta
+        int status = 0;
+        Map<String, String> headers = java.util.Map.of();
+        try {
+            ClientResponse resp = chamarProvedorSelic(req);   // sua chamada HTTP existente
+            status  = resp.statusCode();
+            headers = resp.headers();                          // cru: RateLimit-*, Retry-After
+            return RespostaAoCliente.de(resp);                 // devolve ao cliente
+        } finally {
+            // 4) MOMENTO 2 — aplicar a resposta (bloqueio/headers/reancoragem).
+            //    SEMPRE roda, mesmo se a chamada acima lançar exceção — senão a
+            //    reancoragem trava (status=0/headers vazios sinalizam falha, e a
+            //    âncora libera o flag no finally do RateLimiter).
+            rateLimiter.aplicarResposta(reserva, status, headers);
+        }
+    }
+}

@@ -1,0 +1,7 @@
+// OPCIONAL — adicione ao seu HazelcastConfig existente (o da POC já sobe o cluster).
+// O IMap "rate-limit" funciona sem config explícita (getMap cria), mas vale definir
+// backup pra sobreviver à queda de um nó:
+//
+//   config.getMapConfig("rate-limit").setBackupCount(1);
+//
+// NÃO precisa de CP Subsystem: usamos IMap.lock, que roda no cluster normal (2 nós).
