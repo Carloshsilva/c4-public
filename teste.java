@@ -1,14 +1,1 @@
-public String sendMessageToSelic(String message, String endpoint, String token)
-        throws HaltedCommunicationException, BadResponseFromSelicException, RateLimitExceededException {
-
-    logger.info("Iniciando envio de requisicao para a SELIC");
-
-    // RATE LIMIT (saida): reserva a vaga antes de chamar a SELIC
-    Reserva reserva = rateLimiter.reservar();
-    if (!reserva.isPermitido()) {
-        logger.warn("Rate limit interno: requisicao recusada antes de enviar a SELIC");
-        throw new RateLimitExceededException(1801, "Rate limit interno: requisicao recusada");
-    }
-
-    HttpHeaders headers = generateSelicRequestHeaders(token);
-    ... resto igual ...
+Mostre o método tryToSendRequestToSelic do ProcessingService (o bloco try/catch completo, linhas ~340-365) E como uma exceção lançada por ele sobe até o OutboundControllerV1. Especificamente: se eu lançar uma nova exceção checked (RateLimitExceededException) de dentro do sendMessageToSelic, e quiser que ela chegue ao controller SEM virar generateNewUnexpectedFailure, onde exatamente eu adiciono o catch para re-lançá-la? O processRequestAsynchronously é assíncrono (executor) — a exceção volta como ExecutionException?
