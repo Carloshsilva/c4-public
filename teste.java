@@ -1,5 +1,7 @@
-private ResponseEntity<String> generateRateLimitExceededResponse(Exception exception, String requestId) {
-        logger.warn("A requisicao {} foi recusada por limite de taxa: {}", requestId, exception.getMessage());
-        logger.info("Retornado HTTP 429 Too Many Requests");
-        return ResponseEntity.status(429).body("Too Many Requests");
-    }
+HttpStatusCode statusCode = response.getStatusCode();
+
+        // RATE LIMIT: aplica a resposta (atualiza headers no sucesso, marca bloqueio no 429)
+        rateLimiter.aplicarResposta(reserva, statusCode.value(), response.getHeaders());
+
+        if (statusCode.is4xxClientError() || statusCode.is5xxServerError() || statusCode.isError()) {
+            ...
