@@ -1,0 +1,919 @@
+{
+  "info": {
+    "_postman_id": "8b7384fd-1547-4125-9a28-65f2b3eac35a",
+    "name": "Selic Pre-Matching API v2.0",
+    "description": "Collection para a API do Pre-Matching (Selic Conecta) - versao 2.0.\n\n## Como usar\n1. Importe esta collection e os environments (Sandbox / Producao).\n2. Selecione o Environment desejado (canto superior direito).\n3. Preencha **client_id** e **client_secret** no Environment.\n4. Dispare qualquer request: o token OAuth2 e obtido/renovado automaticamente (pre-request script na collection) e injetado como `Bearer {{access_token}}`.\n\n## Autenticacao\nOAuth2 `client_credentials` (Keycloak, realm `logon`). Endpoint em `{{token_url}}`.\n\n## Variaveis principais (no Environment)\n- `base_url` - base da API (ja inclui `/pre-matching`).\n- `token_url` - endpoint do token OAuth2.\n- `client_id`, `client_secret` - suas credenciais (a unica coisa que o time troca).\n- `access_token`, `access_token_expiry` - gerenciados automaticamente.\n- helpers: `dataMovimento`, `idNegocio`, `idEspecificacao`, `idRequisicao`, `idAssociacao`.\n\n## Rate limit\n100 req/min. Cabecalhos RateLimit-* na resposta; HTTP 429 quando excedido.\n\nFonte: contrato OpenAPI/Swagger oficial e Manual Tecnico de Conectividade (developers.selic.gov.br).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// ===== Auto OAuth2 (client_credentials) =====",
+          "// Renova o access_token automaticamente se estiver ausente ou expirado.",
+          "// Basta preencher client_id e client_secret no Environment selecionado.",
+          "const now = Date.now();",
+          "const exp = Number(pm.environment.get(\"access_token_expiry\")) || 0;",
+          "const token = pm.environment.get(\"access_token\");",
+          "",
+          "if (!token || now >= exp) {",
+          "  const tokenUrl = pm.environment.get(\"token_url\");",
+          "  const clientId = pm.environment.get(\"client_id\");",
+          "  const clientSecret = pm.environment.get(\"client_secret\");",
+          "",
+          "  if (!tokenUrl || !clientId || !clientSecret) {",
+          "    console.warn(\"[Selic] Preencha token_url, client_id e client_secret no Environment.\");",
+          "  } else {",
+          "    pm.sendRequest({",
+          "      url: tokenUrl,",
+          "      method: \"POST\",",
+          "      header: {",
+          "        \"Content-Type\": \"application/x-www-form-urlencoded\",",
+          "        \"Accept\": \"*/*\"",
+          "      },",
+          "      body: {",
+          "        mode: \"urlencoded\",",
+          "        urlencoded: [",
+          "          { key: \"grant_type\", value: \"client_credentials\" },",
+          "          { key: \"client_id\", value: clientId },",
+          "          { key: \"client_secret\", value: clientSecret }",
+          "        ]",
+          "      }",
+          "    }, function (err, res) {",
+          "      if (err) { console.error(\"[Selic] Erro ao obter token:\", err); return; }",
+          "      let data;",
+          "      try { data = res.json(); } catch (e) { console.error(\"[Selic] Token: resposta nao-JSON\"); return; }",
+          "      if (data && data.access_token) {",
+          "        pm.environment.set(\"access_token\", data.access_token);",
+          "        const ttl = (data.expires_in ? data.expires_in : 300) * 1000;",
+          "        // renova 15s antes de expirar",
+          "        pm.environment.set(\"access_token_expiry\", String(Date.now() + ttl - 15000));",
+          "        console.log(\"[Selic] Token OAuth2 renovado.\");",
+          "      } else {",
+          "        console.error(\"[Selic] Resposta sem access_token:\", data);",
+          "      }",
+          "    });",
+          "  }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "dataMovimento",
+      "value": "2020-11-26",
+      "type": "string"
+    },
+    {
+      "key": "idNegocio",
+      "value": "202011260002457",
+      "type": "string"
+    },
+    {
+      "key": "idEspecificacao",
+      "value": "202011260001350",
+      "type": "string"
+    },
+    {
+      "key": "idRequisicao",
+      "value": "123",
+      "type": "string"
+    },
+    {
+      "key": "idAssociacao",
+      "value": "202012290000245202012290000244",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Autenticacao",
+      "description": "Fluxo OAuth2 (Keycloak / realm `logon`). Preencha `client_id` e `client_secret` no Environment.",
+      "item": [
+        {
+          "name": "Obter token (client_credentials)",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "Accept",
+                "value": "*/*"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{token_url}}",
+              "host": [
+                "{{token_url}}"
+              ]
+            },
+            "description": "Recupera um token JWT via OAuth2 (grant_type=client_credentials).\n\nO token e salvo automaticamente na variavel `access_token` do Environment.\n\nObs.: a collection tambem renova o token sozinha em cada request (pre-request script), entao normalmente voce nao precisa rodar este request manualmente."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Salva o token retornado no Environment",
+                  "let data;",
+                  "try { data = pm.response.json(); } catch (e) { data = {}; }",
+                  "if (data.access_token) {",
+                  "  pm.environment.set(\"access_token\", data.access_token);",
+                  "  const ttl = (data.expires_in ? data.expires_in : 300) * 1000;",
+                  "  pm.environment.set(\"access_token_expiry\", String(Date.now() + ttl - 15000));",
+                  "  pm.test(\"Token obtido\", function () { pm.expect(data.access_token).to.be.a(\"string\"); });",
+                  "} else {",
+                  "  pm.test(\"Token obtido\", function () { pm.expect.fail(\"Resposta sem access_token\"); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Negocios",
+      "description": "Representacao de um negocio entre partes.",
+      "item": [
+        {
+          "name": "Criar negocio",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "idempotency-key",
+                "value": "{{$guid}}",
+                "description": "Evita lancamento em duplicidade (max 36 chars, unico por dataMovimento)"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/negocios",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "negocios"
+              ]
+            },
+            "description": "Lanca um negocio (uma ponta). Retorno 201.\n\nATENCAO: o schema exato do corpo (NegocioDTO) nao esta no trecho publico do OpenAPI que consegui ler. Este body e um TEMPLATE baseado nos campos documentados (operacao, parte, contas, titulo, quantidade, PU, dataMovimento). Confirme os campos/obrigatoriedades no Swagger oficial antes de usar em producao.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"operacao\": \"1052\",\n  \"parte\": \"CEDENTE\",\n  \"iselicCedente\": \"00000000\",\n  \"iselicCessionario\": \"00000000\",\n  \"contaCedente\": \"000000001\",\n  \"contaCessionario\": \"000000009\",\n  \"codigoTitulo\": \"100000\",\n  \"dataVencimento\": \"2020-04-01\",\n  \"codigoISIN\": \"BRSTNCLTN772\",\n  \"quantidadeTitulos\": \"10\",\n  \"precoUnitario\": \"964.05020202\",\n  \"dataMovimento\": \"{{dataMovimento}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar negocios",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/negocios?dataMovimento={{dataMovimento}}&pagina=1&tamanhoPagina=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "negocios"
+              ],
+              "query": [
+                {
+                  "key": "dataMovimento",
+                  "value": "{{dataMovimento}}",
+                  "description": "Data de movimento (YYYY-MM-DD) - obrigatorio"
+                },
+                {
+                  "key": "idNegocio",
+                  "value": "",
+                  "description": "Filtra por ID do negocio",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "Status do negocio",
+                  "disabled": true
+                },
+                {
+                  "key": "pagina",
+                  "value": "1",
+                  "description": "Numero da pagina (default 1)",
+                  "disabled": true
+                },
+                {
+                  "key": "tamanhoPagina",
+                  "value": "50",
+                  "description": "Registros por pagina (default 50)",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Lista negocios com filtros. `dataMovimento` e obrigatorio."
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar negocio por ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/negocios/{{idNegocio}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "negocios",
+                "{{idNegocio}}"
+              ]
+            },
+            "description": "Retorna um negocio pelo identificador unico."
+          },
+          "response": []
+        },
+        {
+          "name": "Permitir intermediacao sem associacao",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/negocios/{{idNegocio}}/permitir-intermediacao-sem-associacao",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "negocios",
+                "{{idNegocio}}",
+                "permitir-intermediacao-sem-associacao"
+              ]
+            },
+            "description": "Habilita a intermediacao sem associacao para o negocio informado."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Associacoes",
+      "description": "Representacao da associacao entre negocios.",
+      "item": [
+        {
+          "name": "Criar associacao",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/associacoes",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "associacoes"
+              ]
+            },
+            "description": "Associa dois negocios (ex.: INTERMEDIACAO). Valido somente na data de movimento atual. Retorno 201.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idNegocioVenda\": \"202012290000244\",\n  \"idNegocioCompra\": \"202012290000245\",\n  \"tipoAssociacao\": \"INTERMEDIACAO\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar associacao por ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/associacoes/{{idAssociacao}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "associacoes",
+                "{{idAssociacao}}"
+              ]
+            },
+            "description": "Retorna os negocios associados pelo ID da associacao (concatenacao dos dois ids)."
+          },
+          "response": []
+        },
+        {
+          "name": "Remover associacao",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/associacoes/{{idAssociacao}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "associacoes",
+                "{{idAssociacao}}"
+              ]
+            },
+            "description": "Desfaz a associacao entre dois negocios. Valido somente na data de movimento atual."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Especificacoes",
+      "description": "Representacao de uma especificacao (lastro/alocacao e batimento).",
+      "item": [
+        {
+          "name": "Nova requisicao de especificacao",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "idempotency-key",
+                "value": "{{$guid}}",
+                "description": "Unico por dataMovimento e requisitante (max 36 chars)"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/requisicoes",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "requisicoes"
+              ]
+            },
+            "description": "Registra uma nova requisicao de especificacao para o negocio. O corpo e uma LISTA (permite multiplas requisicoes / quebra de lote). Retorno 201.\n\nHa exemplos no contrato para definitiva, definitiva com termo (3052), leilao (1002/1006) e compromissada (1054) cedente/cessionario.",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"idNegocio\": \"202004010000001\",\n    \"numeroComando\": \"555555\",\n    \"operacao\": \"1052\",\n    \"parte\": \"CEDENTE\",\n    \"contaCedente\": \"000000001\",\n    \"codigoTitulo\": \"100000\",\n    \"dataVencimento\": \"2020-04-01\",\n    \"codigoISIN\": \"BRSTNCLTN772\",\n    \"quantidadeTitulos\": \"8.000\",\n    \"precoUnitario\": \"964.05287997\",\n    \"dataMovimento\": \"{{dataMovimento}}\"\n  }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar requisicoes do negocio",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/requisicoes?dataMovimento={{dataMovimento}}&idNegocio={{idNegocio}}&status=ATIVA&pagina=1&tamanhoPagina=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "requisicoes"
+              ],
+              "query": [
+                {
+                  "key": "dataMovimento",
+                  "value": "{{dataMovimento}}",
+                  "description": "Obrigatorio (YYYY-MM-DD)"
+                },
+                {
+                  "key": "idNegocio",
+                  "value": "{{idNegocio}}",
+                  "description": "Obrigatorio"
+                },
+                {
+                  "key": "status",
+                  "value": "ATIVA",
+                  "description": "Status da requisicao",
+                  "disabled": true
+                },
+                {
+                  "key": "pagina",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "tamanhoPagina",
+                  "value": "50",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Lista requisicoes de especificacao (requisitante + contraparte) de um negocio. `dataMovimento` e `idNegocio` obrigatorios."
+          },
+          "response": []
+        },
+        {
+          "name": "Minhas requisicoes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/requisicoes/minhas?dataMovimento={{dataMovimento}}&status=ATIVA&pagina=1&tamanhoPagina=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "requisicoes",
+                "minhas"
+              ],
+              "query": [
+                {
+                  "key": "dataMovimento",
+                  "value": "{{dataMovimento}}",
+                  "description": "Obrigatorio (YYYY-MM-DD)"
+                },
+                {
+                  "key": "idNegocio",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "ATIVA",
+                  "disabled": true
+                },
+                {
+                  "key": "pagina",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "tamanhoPagina",
+                  "value": "50",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Lista somente as requisicoes de especificacao do proprio requisitante. `dataMovimento` obrigatorio."
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar requisicao por ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/requisicoes/{{idRequisicao}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "requisicoes",
+                "{{idRequisicao}}"
+              ]
+            },
+            "description": "Retorna uma requisicao de especificacao pelo ID."
+          },
+          "response": []
+        },
+        {
+          "name": "Cancelar requisicao",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/requisicoes/{{idRequisicao}}/cancelar",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "requisicoes",
+                "{{idRequisicao}}",
+                "cancelar"
+              ]
+            },
+            "description": "Cancela uma requisicao de especificacao (desde que nao possua especificacao associada)."
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar especificacoes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes?dataMovimento={{dataMovimento}}&status=EM_ESPECIFICACAO&comDivergencia=true&pagina=1&tamanhoPagina=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes"
+              ],
+              "query": [
+                {
+                  "key": "dataMovimento",
+                  "value": "{{dataMovimento}}",
+                  "description": "Obrigatorio (YYYY-MM-DD)"
+                },
+                {
+                  "key": "idNegocio",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "EM_ESPECIFICACAO",
+                  "disabled": true
+                },
+                {
+                  "key": "comDivergencia",
+                  "value": "true",
+                  "description": "So especificacoes com divergencia",
+                  "disabled": true
+                },
+                {
+                  "key": "numeroEspecificacao",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "pagina",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "tamanhoPagina",
+                  "value": "50",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Lista especificacoes. `dataMovimento` obrigatorio."
+          },
+          "response": []
+        },
+        {
+          "name": "Buscar especificacao por ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/{{idEspecificacao}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "{{idEspecificacao}}"
+              ]
+            },
+            "description": "Retorna uma especificacao (e as pontas cedente/cessionario, se o batimento nao estiver concluido)."
+          },
+          "response": []
+        },
+        {
+          "name": "Alterar especificacao",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/{{idEspecificacao}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "{{idEspecificacao}}"
+              ]
+            },
+            "description": "Atualiza a sua ponta da especificacao. Valido somente na data de movimento atual.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"parte\": \"CEDENTE\",\n  \"precoUnitario\": \"10.588769\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Confirmar especificacao",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/{{idEspecificacao}}/confirmar?versao=0&parte=CEDENTE",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "{{idEspecificacao}}",
+                "confirmar"
+              ],
+              "query": [
+                {
+                  "key": "versao",
+                  "value": "0",
+                  "description": "Numero da versao - obrigatorio"
+                },
+                {
+                  "key": "parte",
+                  "value": "CEDENTE",
+                  "description": "CEDENTE ou CESSIONARIO - obrigatorio"
+                }
+              ]
+            },
+            "description": "Confirma uma especificacao. `versao` e `parte` sao obrigatorios."
+          },
+          "response": []
+        },
+        {
+          "name": "Confirmar especificacoes (lote)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/confirmar",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "confirmar"
+              ]
+            },
+            "description": "Confirma uma lista de especificacoes. Valido somente na data de movimento atual.",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"idEspecificacao\": \"202011260001350\",\n    \"versao\": 0,\n    \"parte\": \"CEDENTE\"\n  },\n  {\n    \"idEspecificacao\": \"202011260001351\",\n    \"versao\": 0,\n    \"parte\": \"CEDENTE\"\n  }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Quebra de lote de lastro",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v2/especificacoes/quebra-lote-lastro",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "especificacoes",
+                "quebra-lote-lastro"
+              ]
+            },
+            "description": "Altera as quantidades de titulos na quebra de lote do lastro (compromissada).",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"idEspecificacao\": \"202011260001350\",\n    \"quantidadeTitulos\": 80\n  },\n  {\n    \"idEspecificacao\": \"202011260001351\",\n    \"quantidadeTitulos\": 90\n  }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Comandos",
+      "description": "Representacao de um comando.",
+      "item": [
+        {
+          "name": "Buscar comandos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/comandos?dataMovimento={{dataMovimento}}&operacao=1052&pagina=1&tamanhoPagina=50",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "comandos"
+              ],
+              "query": [
+                {
+                  "key": "dataMovimento",
+                  "value": "{{dataMovimento}}",
+                  "description": "Obrigatorio (YYYY-MM-DD)"
+                },
+                {
+                  "key": "numeroNegocio",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "operacao",
+                  "value": "1052",
+                  "disabled": true
+                },
+                {
+                  "key": "participante",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "contaCedente",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "contaCessionario",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "idNegocio",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "idEspecificacao",
+                  "value": "",
+                  "disabled": true
+                },
+                {
+                  "key": "pagina",
+                  "value": "1",
+                  "disabled": true
+                },
+                {
+                  "key": "tamanhoPagina",
+                  "value": "50",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Lista comandos gerados. `dataMovimento` obrigatorio."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Eventos",
+      "description": "Representacao de um evento.",
+      "item": [
+        {
+          "name": "Buscar eventos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v2/evento?dataMovimento={{dataMovimento}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v2",
+                "evento"
+              ],
+              "query": [
+                {
+                  "key": "dataMovimento",
+                  "value": "{{dataMovimento}}",
+                  "description": "Obrigatorio (YYYY-MM-DD)"
+                },
+                {
+                  "key": "dataHora",
+                  "value": "",
+                  "description": "Opcional: retorna eventos a partir deste instante (ISO 8601)",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Retorna os eventos gerados para acompanhamento das partes. Valido somente na data de movimento atual. `dataMovimento` obrigatorio; opcionalmente informe data/hora inicial."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
