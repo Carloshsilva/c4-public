@@ -1,52 +1,50 @@
 package br.com.b3.middlewares.selicconecta.outbound.services.ratelimit;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import org.junit.jupiter.api.Test;
+
 /**
- * Resultado da decisão do RateLimiter (Momento 1 — "reservar").
- * Diz se a requisição pode ser encaminhada à SELIC e em qual modo,
- * para que o Momento 2 (aplicar a resposta) seja coerente mesmo que
- * o estado do cluster mude no meio da chamada.
- *
- * - permitido:  pode encaminhar? (se false, o proxy devolve 429 ao cliente)
- * - coordenado: a decisão foi tomada no modo coordenado (cluster formado)?
- * - ancora:     é a requisição-âncora da reancoragem (1a após o link voltar)?
- *               A âncora é tratada como coordenada ao aplicar a resposta.
- *
- * Objeto imutável: criado por uma das fábricas estáticas e nunca alterado
- * (sem setters; campos final).
+ * Testes da Reserva: garante que cada fábrica produz a combinação correta
+ * de flags (permitido / coordenado / ancora).
  */
-public final class Reserva {
+public class ReservaTest {
 
-    private final boolean permitido;
-    private final boolean coordenado;
-    private final boolean ancora;
+    @Test
+    public void testCoordenadoPermiteEmModoCoordenadoSemSerAncora() {
+        Reserva r = Reserva.coordenado();
 
-    private Reserva(boolean permitido, boolean coordenado, boolean ancora) {
-        this.permitido = permitido;
-        this.coordenado = coordenado;
-        this.ancora = ancora;
+        assertTrue(r.isPermitido());
+        assertTrue(r.isCoordenado());
+        assertFalse(r.isAncora());
     }
 
-    /** Permitida, modo coordenado (cluster formado). */
-    public static Reserva coordenado() {
-        return new Reserva(true, true, false);
+    @Test
+    public void testDescoordenadoPermiteForaDoModoCoordenado() {
+        Reserva r = Reserva.descoordenado();
+
+        assertTrue(r.isPermitido());
+        assertFalse(r.isCoordenado());
+        assertFalse(r.isAncora());
     }
 
-    /** Permitida, modo descoordenado (sem cluster). */
-    public static Reserva descoordenado() {
-        return new Reserva(true, false, false);
+    @Test
+    public void testAncoraPermiteEhCoordenadaEhAncora() {
+        // a âncora é tratada como coordenada ao aplicar a resposta
+        Reserva r = Reserva.ancora();
+
+        assertTrue(r.isPermitido());
+        assertTrue(r.isCoordenado());
+        assertTrue(r.isAncora());
     }
 
-    /** Permitida como âncora da reancoragem (tratada como coordenada ao aplicar a resposta). */
-    public static Reserva ancora() {
-        return new Reserva(true, true, true);
-    }
+    @Test
+    public void testNegadaNaoPermite() {
+        Reserva r = Reserva.negada();
 
-    /** Negada: não encaminha; o proxy responde 429 ao cliente. */
-    public static Reserva negada() {
-        return new Reserva(false, false, false);
+        assertFalse(r.isPermitido());
+        assertFalse(r.isCoordenado());
+        assertFalse(r.isAncora());
     }
-
-    public boolean isPermitido()  { return permitido; }
-    public boolean isCoordenado() { return coordenado; }
-    public boolean isAncora()     { return ancora; }
 }
