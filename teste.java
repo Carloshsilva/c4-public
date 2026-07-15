@@ -1,50 +1,20 @@
-package br.com.b3.middlewares.selicconecta.outbound.services.ratelimit;
+package br.com.b3.middlewares.selicconecta.outbound.configs;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import java.time.Clock;
 
-import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 /**
- * Testes da Reserva: garante que cada fábrica produz a combinação correta
- * de flags (permitido / coordenado / ancora).
+ * Configuração do rate limiter de saída (chamadas à SELIC).
+ * Por ora, expõe o Clock usado para medir o tempo de bloqueio (em segundos).
  */
-public class ReservaTest {
+@Configuration
+public class RateLimitConfig {
 
-    @Test
-    public void testCoordenadoPermiteEmModoCoordenadoSemSerAncora() {
-        Reserva r = Reserva.coordenado();
-
-        assertTrue(r.isPermitido());
-        assertTrue(r.isCoordenado());
-        assertFalse(r.isAncora());
-    }
-
-    @Test
-    public void testDescoordenadoPermiteForaDoModoCoordenado() {
-        Reserva r = Reserva.descoordenado();
-
-        assertTrue(r.isPermitido());
-        assertFalse(r.isCoordenado());
-        assertFalse(r.isAncora());
-    }
-
-    @Test
-    public void testAncoraPermiteEhCoordenadaEhAncora() {
-        // a âncora é tratada como coordenada ao aplicar a resposta
-        Reserva r = Reserva.ancora();
-
-        assertTrue(r.isPermitido());
-        assertTrue(r.isCoordenado());
-        assertTrue(r.isAncora());
-    }
-
-    @Test
-    public void testNegadaNaoPermite() {
-        Reserva r = Reserva.negada();
-
-        assertFalse(r.isPermitido());
-        assertFalse(r.isCoordenado());
-        assertFalse(r.isAncora());
+    /** Relógio do sistema (UTC). Em teste, injeta-se um Clock.fixed(...). */
+    @Bean
+    public Clock rateLimitClock() {
+        return Clock.systemUTC();
     }
 }
