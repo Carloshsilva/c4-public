@@ -1,17 +1,56 @@
-package br.com.b3.middlewares.selicconecta.outbound.exceptions;
+import org.springframework.http.HttpHeaders;
 
-/**
- * Recusa interna por rate limit de saída (antes de chamar a SELIC).
- * Lançada quando o rate limiter não permite encaminhar (cota no limite ou
- * bloqueio ativo). NÃO é 429 da SELIC: recusa preventiva, mesma natureza das
- * validações de entrada; cliente recebe 429 para retentar. Não causa bloqueio.
- * Faixa de código 18xx (rate limiter interno).
- */
-public class RateLimitExceededException extends ProcessingException {
+public void aplicarResposta(Reserva reserva, int status, HttpHeaders headers) {
+        Integer limite   = header(headers, H_LIMIT);
+        Integer restante = header(headers, H_REMAINING);
+        Integer reset    = header(headers, H_RESET);
+        Integer retryAft = header(headers, H_RETRY_AFTER);
+        boolean temHeaders = (limite != null && restante != null && reset != null);
 
-    private static final long serialVersionUID = 1L;
-
-    public RateLimitExceededException(int code, String message) {
-        super(code, message);
+        try {
+            if (reserva.isCoordenado()) {
+                aplicarCoordenado(status, limite, restante, reset, retryAft, temHeaders);
+            } else {
+                aplicarDescoordenado(status, limite, restante, reset, retryAft, temHeaders);
+            }
+        } finally {
+            if (reserva.isAncora()) {
+                reancorando.set(false);
+                logger.info("Reancoragem concluida");
+            }
+        }
     }
-}
+
+private Integer header(HttpHeaders headers, String nome) {
+        if (headers == null) {
+            return null;
+        }
+        String valor = headers.getFirst(nome); // HttpHeaders é case-insensitive e retorna o 1o valor
+        if (valor == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(valor.trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+
+
+private HttpHeaders headers(int limite, int restante, int reset) {
+        HttpHeaders h = new HttpHeaders();
+        h.add("RateLimit-Limit", String.valueOf(limite));
+        h.add("RateLimit-Remaining", String.valueOf(restante));
+        h.add("RateLimit-Reset", String.valueOf(reset));
+        return h;
+    }
+
+    private HttpHeaders headers429(int reset, int retryAfter) {
+        HttpHeaders h = new HttpHeaders();
+        h.add("RateLimit-Reset", String.valueOf(reset));
+        h.add("Retry-After", String.valueOf(retryAfter));
+        return h;
+    }
+
+import org.springframework.http.HttpHeaders;
