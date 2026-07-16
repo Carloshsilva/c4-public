@@ -1,2 +1,1 @@
-grep -rln "Relogio" code/src/test/
-grep -rln "outbound.ratelimit\|Relogio" code/src/test/
+git log --oneline --pretty="%an %s" origin/NMIPN-3515-throttling-selic-connecta -30
