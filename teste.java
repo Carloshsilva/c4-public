@@ -1,1 +1,1 @@
-git log --pretty="%an %s" origin/develop -- "*CustomServicesConfiguration.java" "*ValidationServiceTestConfiguration.java"
+git diff cefef03 HEAD -- code/src/test/java/br/com/b3/middlewares/selicconecta/outbound/tests/config/CustomServicesConfiguration.java
