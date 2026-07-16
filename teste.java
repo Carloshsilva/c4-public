@@ -1,1 +1,2 @@
-grep -n "Relogio\|RateLimiter\|ratelimit" code/src/test/java/br/com/b3/middlewares/selicconecta/outbound/tests/config/ValidationServiceTestConfiguration.java
+grep -rln "Relogio" code/src/test/
+grep -rln "outbound.ratelimit\|Relogio" code/src/test/
