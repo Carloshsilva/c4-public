@@ -1,7 +1,2 @@
-HttpStatusCode statusCode = response.getStatusCode();
-
-        // RATE LIMIT: aplica a resposta (atualiza headers no sucesso, marca bloqueio no 429)
-        rateLimiter.aplicarResposta(reserva, statusCode.value(), response.getHeaders());
-
-        if (statusCode.is4xxClientError() || statusCode.is5xxServerError() || statusCode.isError()) {
-            ...
+No método tryToSendRequestToSelic do ProcessingService, mostre o bloco try/catch completo como está agora. Especificamente: já existe um catch (SelicRateLimitException ...) nele? E existe um catch (RateLimitExceededException ...)? Liste todos os catches na ordem em que aparecem.
+Além disso, no generateCustomResponse do OutboundControllerV1, mostre todos os instanceof que já existem — já tem algum para SelicRateLimitException ou RateLimitExceededException?
