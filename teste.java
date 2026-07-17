@@ -4,6 +4,11 @@
 > Onde aparecer `<colega>`, troque pelo nome ou email exato do colega no git (você descobre no passo 0.3).
 > Onde aparecer `<COMANDO-DE-TESTE-DO-CI>`, troque pelo mesmo comando que o CI do GitHub roda (está no `.github/workflows/*.yml`, no job que trava o deploy).
 
+**Contexto desta situação:**
+- Você refez a sua implementação **do zero** na `<sua-branch>` (com rebase). Não há trabalho legítimo seu a resgatar da develop — a sua branch é a fonte de verdade do seu domínio.
+- A develop está contaminada: tem o seu lixo antigo (classes que serão deletadas, arquivos que você refez), o trabalho legítimo do colega, e arquivos compartilhados (ex.: classes de teste) que você refez e que o colega **pode** ter mexido também.
+- Objetivo: produzir uma branch limpa (sua versão + trabalho do colega, sem lixo) e entregá-la por PR na develop protegida.
+
 **Regras de ouro (o que te queimou antes):**
 - Nunca dê `force-push` em nada compartilhado.
 - Nunca faça merge local direto na develop — ela é protegida, entra só por PR.
@@ -13,13 +18,13 @@
 
 ---
 
-## Fase 0 — Reconhecimento (montar as listas antes de mesclar)
+## Fase 0 — Reconhecimento e auditoria (antes de mesclar)
 
-O objetivo desta fase é substituir a sua memória por três listas objetivas: o que **você** mexeu, o que o **colega** mexeu, e a **interseção** (arquivos perigosos que precisam das duas versões juntas).
+Objetivo: substituir a sua memória por listas objetivas. Você vai descobrir o que o colega mexeu, e quais arquivos você refez precisam de conferência (porque o colega também mexeu neles).
 
 ### 0.1 — Sincronize e ache o PONTO DE CRIAÇÃO ORIGINAL da branch
 
-Por causa do rebase, o `git merge-base` pode falhar (retornar vazio ou apontar pra um ponto depois das suas alterações). Por isso achamos o ponto de criação original pelo **reflog**, que sobrevive ao rebase.
+Por causa do rebase, o `git merge-base` pode falhar (retornar vazio ou apontar pra um ponto depois das suas alterações). Por isso, se ele falhar, achamos o ponto original pelo **reflog**, que sobrevive ao rebase.
 
 ```bash
 git fetch origin
@@ -51,7 +56,7 @@ Se não ficar claro, liste os pontos onde a branch já esteve (a última linha, 
 git log -g --oneline <sua-branch>
 ```
 
-Fixe o `MB` nesse hash e confirme que agora a lista vem populada:
+Fixe o `MB` nesse hash e confirme que a lista vem populada:
 
 ```bash
 MB=<hash-original-que-voce-copiou>
@@ -59,7 +64,7 @@ echo "$MB"
 git diff --name-only "$MB" <sua-branch> | head
 ```
 
-Se listou arquivos, achamos o ponto certo. **Esse `$MB` será usado em todos os passos seguintes** (0.3 a 0.6) — sempre confira com `echo "$MB"` antes de cada um se estiver em dúvida.
+Se listou arquivos, achamos o ponto certo. **Esse `$MB` será usado em todos os passos seguintes.**
 
 ### 0.2 — Descubra o nome/email exato do colega
 
@@ -69,51 +74,66 @@ git log "$MB"..origin/develop --format='%an <%ae>' | sort -u
 
 Lista todos os autores que commitaram na develop desde o ponto de partida. **Copie a string exata do colega.** Se aparecer um terceiro nome inesperado, entrou trabalho de mais alguém no período — bom saber agora.
 
-### 0.3 — Lista A: arquivos que VOCÊ mexeu
-
-```bash
-git diff --name-only "$MB" <sua-branch> | sort > ../lista-minhas.txt
-cat ../lista-minhas.txt
-```
-
-Todos os arquivos que diferem entre o ponto de criação original e a sua branch — o seu domínio.
-*(Windows sem git-bash: troque `../lista-minhas.txt` por um caminho tipo `C:\temp\lista-minhas.txt`.)*
-Se vier **vazio**, o `$MB` ainda está errado — volte ao 0.1 e use o reflog.
-
-### 0.4 — Lista B: arquivos que o COLEGA mexeu
+### 0.3 — Lista B: arquivos que o COLEGA mexeu
 
 ```bash
 git log --author="<colega>" --name-only --pretty=format: "$MB"..origin/develop | sort -u | sed '/^$/d' > ../lista-colega.txt
 cat ../lista-colega.txt
 ```
 
-O filtro `--author` pega só os commits dele, então o seu lixo (que também está na develop) fica de fora automaticamente. Resultado: o domínio limpo do colega.
+O filtro `--author` pega só os commits dele, então o seu lixo (que também está na develop) fica de fora automaticamente. Esta é a lista do domínio limpo do colega — vamos cruzar com ela nos próximos passos.
 
-### 0.5 — Lista C: a INTERSEÇÃO (arquivos perigosos)
-
-```bash
-comm -12 ../lista-minhas.txt ../lista-colega.txt > ../lista-perigo.txt
-cat ../lista-perigo.txt
-```
-
-`comm -12` mostra só o que aparece nas duas listas — arquivos que vocês dois tocaram. **Todo arquivo aqui é um caso "classe X"**: precisa da sua versão nova E das mudanças dele juntas. Nunca resolva um destes com `ours` cego.
-
-- **Lista vazia:** vocês trabalharam em domínios separados, sem caso classe X. O merge será quase indolor.
-- **Lista com arquivos:** são exatamente esses que exigem atenção manual nos passos 5 e 5.1.
-
-### 0.6 — Inspecione cada arquivo da interseção
-
-Para cada arquivo em `lista-perigo.txt`, veja o que o colega mudou nele:
+### 0.4 — Inventário: o que difere entre a sua branch e a develop
 
 ```bash
-git log --author="<colega>" -p "$MB"..origin/develop -- <caminho/da/classe-X>
+git diff --name-status <sua-branch> origin/develop | sort -k2 > ../inventario.txt
+cat ../inventario.txt
 ```
 
-O `-p` mostra o diff (as linhas dele). **Anote o que precisa estar presente na versão final** além do seu trabalho. Para ver o estado final da versão dele e copiar trechos:
+Cada linha tem uma letra (lendo no sentido "da sua branch para a develop"):
+
+- **`A`** — existe na develop, **não** existe na sua branch. É **lixo** (classe que o rebase removeu) **ou** arquivo **novo do colega**. Na entrega (Fase 2) todo `A` some — então é preciso garantir que nenhum `A` seja do colega (passo 0.6).
+- **`M`** — existe nos dois lados, conteúdo diferente. São os arquivos que você **refez do zero** (sua classe, sua classe de teste). Auditados no passo 0.5.
+- **`D`** — existe só na sua branch. É o seu trabalho novo. Fica, sem drama.
+
+### 0.5 — Arquivos que você REFEZ (os `M`) e quais o colega também mexeu
+
+Estes são o coração do seu caso: arquivos que já existiam, você refez do zero, e a versão da develop não vale mais — **mas** você precisa saber se o colega mexeu neles antes de descartar o lado dele.
 
 ```bash
-git show origin/develop:<caminho/da/classe-X>
+# arquivos que existem nos dois lados e diferem (os "M" do inventario)
+git diff --name-status <sua-branch> origin/develop | awk '$1=="M"{print $2}' | sort > ../modificados-ambos.txt
+cat ../modificados-ambos.txt
+
+# subconjunto perigoso: dos que você refez, quais o COLEGA também mexeu
+comm -12 ../modificados-ambos.txt ../lista-colega.txt > ../refiz-e-colega-mexeu.txt
+cat ../refiz-e-colega-mexeu.txt
 ```
+
+Isso te divide em dois grupos:
+
+- **Em `modificados-ambos.txt` mas NÃO em `refiz-e-colega-mexeu.txt`:** você refez, o colega **não** tocou. A versão da develop é puro lixo antigo. **Fica com a sua, sem dó** — não há nada do colega a perder.
+- **Em `refiz-e-colega-mexeu.txt`:** você refez **e** o colega mexeu. **Caso perigoso** — sua versão vence no que é seu, mas o colega pode ter adicionado algo que precisa sobreviver. Confira cada um no passo 0.6 antes de deixar a sua vencer.
+
+### 0.6 — Inspecione o que o colega fez nos arquivos perigosos
+
+Para **cada** arquivo em `refiz-e-colega-mexeu.txt` (e para qualquer `A` do inventário que também apareça na `lista-colega.txt`), veja só as linhas do colega:
+
+```bash
+git log --author="<colega>" -p "$MB"..origin/develop -- <caminho/do/arquivo>
+```
+
+Para ver o estado final da versão dele e copiar trechos:
+
+```bash
+git show origin/develop:<caminho/do/arquivo>
+```
+
+**Anote**, por arquivo, o que precisa sobreviver da versão do colega. Decisão por arquivo:
+- Se o que ele fez já está contemplado na sua reimplementação (ou não vale mais) → fica só a sua versão.
+- Se ele adicionou algo que ainda vale (um método, um teste novo que cobre outra coisa) → você traz **essa parte** pra dentro da sua versão na mão (nos passos 5/5.1).
+
+> Ao fim da Fase 0 você tem: a lista do colega, o inventário classificado (A/M/D), a lista de arquivos que você refez, e — o mais importante — a lista curta de arquivos perigosos com anotação do que preservar de cada um.
 
 ---
 
@@ -126,7 +146,7 @@ git branch backup/antes-de-mexer <sua-branch>
 git branch --list "backup/*"
 ```
 
-Cria uma cópia de segurança. Se algo der errado, você volta pra cá sem perder nada. O segundo comando deve listar `backup/antes-de-mexer`.
+Cópia de segurança. Se algo der errado, você volta pra cá sem perder nada. O segundo comando deve listar `backup/antes-de-mexer`.
 
 ### 3 — Entre na sua branch
 
@@ -143,10 +163,10 @@ A primeira linha do `status` deve dizer `On branch <sua-branch>`. Se disser outr
 git merge origin/develop
 ```
 
-Mescla a develop atual **para dentro** da sua branch, puxando automaticamente o trabalho do colega. Depois disso a branch terá três coisas misturadas: sua implementação final + trabalho do colega + o lixo (limpo no passo 6).
+Mescla a develop atual **para dentro** da sua branch, puxando automaticamente o trabalho do colega. Depois disso a branch terá: sua implementação final + trabalho do colega + o lixo (limpo no passo 6).
 
 - Se aparecerem **conflitos** → vá para o passo 5.
-- Se disser `Already up to date` ou mesclar sem conflito → vá para o passo 5.1 (ainda precisa conferir os arquivos de perigo).
+- Se disser `Already up to date` ou mesclar sem conflito → vá para o passo 5.1 (ainda precisa conferir os arquivos perigosos).
 
 ### 5 — Resolva os conflitos usando as listas como gabarito
 
@@ -160,11 +180,11 @@ O git marca as regiões conflitantes assim:
 >>>>>>> origin/develop
 ```
 
-Decida em cada bloco qual versão fica (ou junte as duas), e **apague os marcadores** (`<<<<<<<`, `=======`, `>>>>>>>`). Use as listas para decidir:
+Decida em cada bloco (ou junte as duas partes) e **apague os marcadores** (`<<<<<<<`, `=======`, `>>>>>>>`). Use as listas da Fase 0:
 
-- Arquivo **só na Lista A** (seu, não está na de perigo) → **sua versão manda**.
-- Arquivo **só na Lista B** (só do colega) → **a versão dele manda**, não descarte.
-- Arquivo na **Lista C / perigo** (interseção) → **junte os dois na mão**: sua versão nova + as linhas do colega que você anotou no passo 0.6. Este é o caso classe X.
+- Arquivo que você **refez e o colega NÃO mexeu** (em `modificados-ambos.txt`, fora de `refiz-e-colega-mexeu.txt`) → **sua versão manda**.
+- Arquivo **só do colega** (na `lista-colega.txt`, você não mexeu) → **a versão dele manda**, não descarte.
+- Arquivo **perigoso** (em `refiz-e-colega-mexeu.txt`) → **junte na mão**: sua versão + as linhas do colega que você anotou no 0.6.
 
 Depois de arrumar cada arquivo:
 
@@ -179,24 +199,24 @@ git status
 git commit
 ```
 
-### 5.1 — Confira que o merge não comeu o trabalho do colega (risco silencioso)
+### 5.1 — Confira que o merge não descartou o trabalho do colega (risco silencioso)
 
-O merge pode resolver uma classe X **sem marcar conflito**, mantendo só a sua versão e descartando a do colega em silêncio. Por isso, para **cada** arquivo da `lista-perigo.txt`:
+O merge pode resolver um arquivo perigoso **sem marcar conflito**, mantendo só a sua versão e descartando a do colega em silêncio. Por isso, para **cada** arquivo da `refiz-e-colega-mexeu.txt`:
 
 ```bash
-git diff "$MB" HEAD -- <caminho/da/classe-X>
+git diff "$MB" HEAD -- <caminho/do/arquivo>
 ```
 
-Verifique se as linhas do colega (que você viu no passo 0.6) estão presentes. Se **não** estiverem, o merge descartou o trabalho dele — edite o arquivo na mão trazendo as mudanças, depois:
+Verifique se as linhas do colega (que você anotou no 0.6) estão presentes. Se **não** estiverem, traga na mão editando o arquivo, depois:
 
 ```bash
-git add <caminho/da/classe-X>
-git commit -m "Integra alteracoes do colega na classe X"
+git add <caminho/do/arquivo>
+git commit -m "Integra alteracoes do colega em <arquivo>"
 ```
 
 ### 6 — Apague o lixo na mão
 
-Remova as classes fora de lugar e as que deviam ter sido deletadas:
+Remova as classes fora de lugar e as que deviam ter sido deletadas (os `A` do inventário que **não** são do colega):
 
 ```bash
 git rm <caminho/da/classe-lixo1> <caminho/da/classe-lixo2>
@@ -246,7 +266,7 @@ git status
 
 O primeiro comando esvazia a árvore; o segundo repõe **exatamente** o conteúdo da sua branch limpa. O lixo (que só existia na develop) não volta e vira deleção.
 
-**Prova visual:** no `status`, o lixo aparece como `deleted:` e os arquivos do colega aparecem presentes. Leia a lista inteira — **todo `deleted:` tem que ser lixo**. Se um arquivo legítimo aparecer como deletado, algo saiu errado nos passos 5/6; pare. Se estiver tudo certo:
+**Prova visual:** no `status`, o lixo aparece como `deleted:` e os arquivos do colega aparecem presentes. Leia a lista inteira — **todo `deleted:` tem que ser lixo**. Se um arquivo legítimo (seu ou do colega) aparecer como deletado, algo saiu errado nos passos 5/6; pare. Se estiver tudo certo:
 
 ```bash
 git commit -m "Estabiliza develop: versao final limpa, sem classes obsoletas"
@@ -281,13 +301,17 @@ No GitHub, abra um Pull Request de **`deploy/final` → `develop`** e então:
 
 ## Checklist rápido
 
-- [ ] 0.1 Ponto de criação original achado (via merge-base OU reflog) — `$MB` correto
-- [ ] 0.2–0.6 Listas montadas (minhas, colega, interseção) e arquivos de perigo inspecionados
+- [ ] 0.1 Ponto de criação original achado (merge-base OU reflog) — `$MB` correto
+- [ ] 0.2 Nome/email do colega copiado
+- [ ] 0.3 `lista-colega.txt` gerada
+- [ ] 0.4 `inventario.txt` gerado (A / M / D classificados)
+- [ ] 0.5 `modificados-ambos.txt` e `refiz-e-colega-mexeu.txt` gerados
+- [ ] 0.6 Cada arquivo perigoso inspecionado, anotado o que preservar do colega
 - [ ] 2 Backup criado
 - [ ] 4 Merge da develop na branch
 - [ ] 5 Conflitos resolvidos pelo gabarito das listas
-- [ ] 5.1 Cada arquivo de perigo conferido (trabalho do colega presente)
-- [ ] 6 Lixo removido
+- [ ] 5.1 Cada arquivo perigoso conferido (trabalho do colega presente)
+- [ ] 6 Lixo removido (os `A` que não são do colega)
 - [ ] 7 Testes locais VERDES
 - [ ] 9 `deploy/final` com o lixo aparecendo como `deleted:`
 - [ ] 10 `git diff <sua-branch> deploy/final` vazio
