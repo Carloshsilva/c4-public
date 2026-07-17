@@ -1,7 +1,7 @@
 # Plano para estabilizar a develop
 
 > **Convenção:** onde aparecer `<sua-branch>`, troque pelo nome da sua branch com a implementação final correta (ex.: `feature/minha-alteracao`).
-> Onde aparecer `<colega>`, troque pelo nome ou email exato do colega no git (você descobre no passo 0.2).
+> Onde aparecer `<colega>`, troque pelo nome ou email exato do colega no git (você descobre no passo 0.3).
 > Onde aparecer `<COMANDO-DE-TESTE-DO-CI>`, troque pelo mesmo comando que o CI do GitHub roda (está no `.github/workflows/*.yml`, no job que trava o deploy).
 
 **Regras de ouro (o que te queimou antes):**
@@ -9,6 +9,7 @@
 - Nunca faça merge local direto na develop — ela é protegida, entra só por PR.
 - Combine com o colega de **não empurrar nada pra develop** até seu PR entrar. Se ele empurrar, o alvo se move e você refaz a partir do passo 4.
 - O juiz final é a suíte de testes rodando localmente (passo 7). Enquanto vermelho, você não terminou.
+- **Rode tudo na MESMA sessão de terminal** — a variável `$MB` só sobrevive na sessão onde foi definida.
 
 ---
 
@@ -16,20 +17,54 @@
 
 O objetivo desta fase é substituir a sua memória por três listas objetivas: o que **você** mexeu, o que o **colega** mexeu, e a **interseção** (arquivos perigosos que precisam das duas versões juntas).
 
-### 0.1 — Sincronize e defina o ponto de referência
+### 0.1 — Sincronize e ache o PONTO DE CRIAÇÃO ORIGINAL da branch
+
+Por causa do rebase, o `git merge-base` pode falhar (retornar vazio ou apontar pra um ponto depois das suas alterações). Por isso achamos o ponto de criação original pelo **reflog**, que sobrevive ao rebase.
 
 ```bash
 git fetch origin
-MB=$(git merge-base <sua-branch> origin/develop)
-echo $MB
 ```
 
-`git fetch` atualiza o retrato do servidor sem mexer nas suas branches. `git merge-base` acha o ancestral comum (o ponto de onde você e o colega partiram); a variável `MB` guarda esse commit. **Confira que imprimiu um hash** — se vier vazio, pare.
+Primeiro tente o `merge-base` (caminho fácil, quando funciona):
+
+```bash
+MB=$(git merge-base <sua-branch> origin/develop)
+echo "$MB"
+git diff --name-only "$MB" <sua-branch> | head
+```
+
+**Decisão:**
+- Se `echo "$MB"` mostrou um hash **e** o `git diff` acima listou arquivos → o `merge-base` está bom, **pule para 0.2**.
+- Se `$MB` veio **vazio**, ou o `git diff` veio **vazio** → o rebase furou o `merge-base`. Ache o ponto original pelo reflog abaixo.
+
+**Achar o ponto original pelo reflog:**
+
+```bash
+git reflog show <sua-branch> | tail -20
+```
+
+Role até o fim (embaixo). A entrada mais antiga costuma dizer `branch: Created from ...` ou `checkout: moving from ... to <sua-branch>`. O **hash à esquerda dessa linha** é o ponto de criação, de semanas atrás, antes de qualquer rebase.
+
+Se não ficar claro, liste os pontos onde a branch já esteve (a última linha, mais antiga, é o nascimento):
+
+```bash
+git log -g --oneline <sua-branch>
+```
+
+Fixe o `MB` nesse hash e confirme que agora a lista vem populada:
+
+```bash
+MB=<hash-original-que-voce-copiou>
+echo "$MB"
+git diff --name-only "$MB" <sua-branch> | head
+```
+
+Se listou arquivos, achamos o ponto certo. **Esse `$MB` será usado em todos os passos seguintes** (0.3 a 0.6) — sempre confira com `echo "$MB"` antes de cada um se estiver em dúvida.
 
 ### 0.2 — Descubra o nome/email exato do colega
 
 ```bash
-git log $MB..origin/develop --format='%an <%ae>' | sort -u
+git log "$MB"..origin/develop --format='%an <%ae>' | sort -u
 ```
 
 Lista todos os autores que commitaram na develop desde o ponto de partida. **Copie a string exata do colega.** Se aparecer um terceiro nome inesperado, entrou trabalho de mais alguém no período — bom saber agora.
@@ -37,17 +72,18 @@ Lista todos os autores que commitaram na develop desde o ponto de partida. **Cop
 ### 0.3 — Lista A: arquivos que VOCÊ mexeu
 
 ```bash
-git diff --name-only $MB <sua-branch> | sort > ../lista-minhas.txt
+git diff --name-only "$MB" <sua-branch> | sort > ../lista-minhas.txt
 cat ../lista-minhas.txt
 ```
 
-Todos os arquivos que diferem entre o ponto de partida e a sua branch — o seu domínio.
+Todos os arquivos que diferem entre o ponto de criação original e a sua branch — o seu domínio.
 *(Windows sem git-bash: troque `../lista-minhas.txt` por um caminho tipo `C:\temp\lista-minhas.txt`.)*
+Se vier **vazio**, o `$MB` ainda está errado — volte ao 0.1 e use o reflog.
 
 ### 0.4 — Lista B: arquivos que o COLEGA mexeu
 
 ```bash
-git log --author="<colega>" --name-only --pretty=format: $MB..origin/develop | sort -u | sed '/^$/d' > ../lista-colega.txt
+git log --author="<colega>" --name-only --pretty=format: "$MB"..origin/develop | sort -u | sed '/^$/d' > ../lista-colega.txt
 cat ../lista-colega.txt
 ```
 
@@ -70,7 +106,7 @@ cat ../lista-perigo.txt
 Para cada arquivo em `lista-perigo.txt`, veja o que o colega mudou nele:
 
 ```bash
-git log --author="<colega>" -p $MB..origin/develop -- <caminho/da/classe-X>
+git log --author="<colega>" -p "$MB"..origin/develop -- <caminho/da/classe-X>
 ```
 
 O `-p` mostra o diff (as linhas dele). **Anote o que precisa estar presente na versão final** além do seu trabalho. Para ver o estado final da versão dele e copiar trechos:
@@ -82,14 +118,6 @@ git show origin/develop:<caminho/da/classe-X>
 ---
 
 ## Fase 1 — Montar a árvore correta na sua branch
-
-### 1 — Sincronize (se ainda não fez na Fase 0)
-
-```bash
-git fetch origin
-```
-
-Atualiza o estado do servidor sem mexer no seu trabalho.
 
 ### 2 — Backup da sua branch
 
@@ -156,7 +184,7 @@ git commit
 O merge pode resolver uma classe X **sem marcar conflito**, mantendo só a sua versão e descartando a do colega em silêncio. Por isso, para **cada** arquivo da `lista-perigo.txt`:
 
 ```bash
-git diff $MB HEAD -- <caminho/da/classe-X>
+git diff "$MB" HEAD -- <caminho/da/classe-X>
 ```
 
 Verifique se as linhas do colega (que você viu no passo 0.6) estão presentes. Se **não** estiverem, o merge descartou o trabalho dele — edite o arquivo na mão trazendo as mudanças, depois:
@@ -253,7 +281,8 @@ No GitHub, abra um Pull Request de **`deploy/final` → `develop`** e então:
 
 ## Checklist rápido
 
-- [ ] 0.1–0.6 Listas montadas (minhas, colega, interseção) e arquivos de perigo inspecionados
+- [ ] 0.1 Ponto de criação original achado (via merge-base OU reflog) — `$MB` correto
+- [ ] 0.2–0.6 Listas montadas (minhas, colega, interseção) e arquivos de perigo inspecionados
 - [ ] 2 Backup criado
 - [ ] 4 Merge da develop na branch
 - [ ] 5 Conflitos resolvidos pelo gabarito das listas
